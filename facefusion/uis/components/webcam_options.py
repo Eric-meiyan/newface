@@ -12,6 +12,8 @@ WEBCAM_DEVICE_ID_DROPDOWN : Optional[gradio.Dropdown] = None
 WEBCAM_MODE_RADIO : Optional[gradio.Radio] = None
 WEBCAM_RESOLUTION_DROPDOWN : Optional[gradio.Dropdown] = None
 WEBCAM_FPS_SLIDER : Optional[gradio.Slider] = None
+STREAM_PROCESS_SCALE_DROPDOWN : Optional[gradio.Dropdown] = None
+STREAM_FRAME_DROP_CHECKBOX : Optional[gradio.Checkbox] = None
 
 
 def render() -> None:
@@ -19,6 +21,8 @@ def render() -> None:
 	global WEBCAM_MODE_RADIO
 	global WEBCAM_RESOLUTION_DROPDOWN
 	global WEBCAM_FPS_SLIDER
+	global STREAM_PROCESS_SCALE_DROPDOWN
+	global STREAM_FRAME_DROP_CHECKBOX
 
 	local_camera_ids = detect_local_camera_ids(0, 10) or [ 'none' ] #type:ignore[list-item]
 	WEBCAM_DEVICE_ID_DROPDOWN = gradio.Dropdown(
@@ -43,7 +47,18 @@ def render() -> None:
 		minimum = 1,
 		maximum = 30
 	)
+	STREAM_PROCESS_SCALE_DROPDOWN = gradio.Dropdown(
+		label = translator.get('uis.stream_process_scale_dropdown'),
+		choices = uis_choices.stream_process_scales,
+		value = 0.5
+	)
+	STREAM_FRAME_DROP_CHECKBOX = gradio.Checkbox(
+		label = translator.get('uis.stream_frame_drop_checkbox'),
+		value = True
+	)
 	register_ui_component('webcam_device_id_dropdown', WEBCAM_DEVICE_ID_DROPDOWN)
 	register_ui_component('webcam_mode_radio', WEBCAM_MODE_RADIO)
 	register_ui_component('webcam_resolution_dropdown', WEBCAM_RESOLUTION_DROPDOWN)
 	register_ui_component('webcam_fps_slider', WEBCAM_FPS_SLIDER)
+	register_ui_component('stream_process_scale_dropdown', STREAM_PROCESS_SCALE_DROPDOWN)
+	register_ui_component('stream_frame_drop_checkbox', STREAM_FRAME_DROP_CHECKBOX)

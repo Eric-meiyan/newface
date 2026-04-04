@@ -16,12 +16,16 @@ Prediction : TypeAlias = NDArray[Any]
 BoundingBox : TypeAlias = NDArray[Any]
 FaceLandmark5 : TypeAlias = NDArray[Any]
 FaceLandmark68 : TypeAlias = NDArray[Any]
+FaceLandmark468 : TypeAlias = NDArray[Any]
+FaceBlendshapes : TypeAlias = NDArray[Any]
+FacePoseMatrix : TypeAlias = NDArray[Any]
 FaceLandmarkSet = TypedDict('FaceLandmarkSet',
 {
 	'5' : FaceLandmark5, #type:ignore[valid-type]
 	'5/68' : FaceLandmark5, #type:ignore[valid-type]
 	'68' : FaceLandmark68, #type:ignore[valid-type]
-	'68/5' : FaceLandmark68 #type:ignore[valid-type]
+	'68/5' : FaceLandmark68, #type:ignore[valid-type]
+	'468' : FaceLandmark468 #type:ignore[valid-type]
 })
 FaceScoreSet = TypedDict('FaceScoreSet',
 {
@@ -42,8 +46,10 @@ Face = namedtuple('Face',
 	'embedding_norm',
 	'gender',
 	'age',
-	'race'
-])
+	'race',
+	'blendshapes',
+	'pose_matrix'
+], defaults = [ None, None ])
 FaceSet : TypeAlias = Dict[str, List[Face]]
 FaceStore = TypedDict('FaceStore',
 {
@@ -115,8 +121,8 @@ LogLevelSet : TypeAlias = Dict[LogLevel, int]
 TableHeader : TypeAlias = str
 TableContent : TypeAlias = Any
 
-FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yolo_face', 'yunet']
-FaceLandmarkerModel = Literal['many', '2dfan4', 'peppa_wutz']
+FaceDetectorModel = Literal['many', 'retinaface', 'scrfd', 'yolo_face', 'yunet', 'mediapipe']
+FaceLandmarkerModel = Literal['many', '2dfan4', 'peppa_wutz', 'mediapipe']
 FaceDetectorSet : TypeAlias = Dict[FaceDetectorModel, List[str]]
 FaceSelectorMode = Literal['many', 'one', 'reference']
 FaceSelectorOrder = Literal['left-right', 'right-left', 'top-bottom', 'bottom-top', 'small-large', 'large-small', 'best-worst', 'worst-best']

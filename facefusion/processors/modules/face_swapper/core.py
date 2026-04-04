@@ -15,6 +15,7 @@ from facefusion.execution import has_execution_provider
 from facefusion.face_analyser import get_average_face, get_many_faces, get_one_face, scale_face
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_area_mask, create_box_mask, create_occlusion_mask, create_region_mask
+from facefusion.face_pose import compensate_perspective, decompose_pose_matrix
 from facefusion.face_selector import select_faces, sort_faces_by_order
 from facefusion.filesystem import filter_image_paths, has_image, in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.model_helper import get_static_model_initializer
@@ -584,6 +585,15 @@ def swap_face(source_face : Face, target_face : Face, temp_vision_frame : Vision
 	pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
 	pixel_boost_total = pixel_boost_size[0] // model_size[0]
 	crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame, target_face.landmark_set.get('5/68'), model_template, pixel_boost_size)
+	needs_perspective = False
+
+	if target_face.pose_matrix is not None and source_face.pose_matrix is not None:
+		_, target_yaw, _, _ = decompose_pose_matrix(target_face.pose_matrix)
+
+		if abs(target_yaw) > 30:
+			needs_perspective = True
+			crop_vision_frame = compensate_perspective(crop_vision_frame, source_face.pose_matrix, target_face.pose_matrix)
+
 	temp_vision_frames = []
 	crop_masks = []
 
@@ -602,6 +612,9 @@ def swap_face(source_face : Face, target_face : Face, temp_vision_frame : Vision
 		pixel_boost_vision_frame = normalize_crop_frame(pixel_boost_vision_frame)
 		temp_vision_frames.append(pixel_boost_vision_frame)
 	crop_vision_frame = explode_pixel_boost(temp_vision_frames, pixel_boost_total, model_size, pixel_boost_size)
+
+	if needs_perspective:
+		crop_vision_frame = compensate_perspective(crop_vision_frame, target_face.pose_matrix, source_face.pose_matrix)
 
 	if 'area' in state_manager.get_item('face_mask_types'):
 		face_landmark_68 = cv2.transform(target_face.landmark_set.get('68').reshape(1, -1, 2), affine_matrix).reshape(-1, 2)

@@ -10,7 +10,8 @@ face_detector_set : FaceDetectorSet =\
 	'retinaface': [ '160x160', '320x320', '480x480', '512x512', '640x640' ],
 	'scrfd': [ '160x160', '320x320', '480x480', '512x512', '640x640' ],
 	'yolo_face': [ '640x640' ],
-	'yunet': [ '640x640' ]
+	'yunet': [ '640x640' ],
+	'mediapipe': [ '640x640' ]
 }
 face_detector_models : List[FaceDetectorModel] = list(get_args(FaceDetectorModel))
 face_landmarker_models : List[FaceLandmarkerModel] = list(get_args(FaceLandmarkerModel))

@@ -4,7 +4,7 @@ from typing import List, Sequence, Tuple
 import cv2
 import numpy
 
-from facefusion import inference_manager, state_manager
+from facefusion import inference_manager, mediapipe_manager, state_manager
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
 from facefusion.face_helper import create_rotation_matrix_and_size, create_static_anchors, distance_to_bounding_box, distance_to_face_landmark_5, normalize_bounding_box, transform_bounding_box, transform_points
 from facefusion.filesystem import resolve_relative_path
@@ -116,26 +116,47 @@ def create_static_model_set(download_scope : DownloadScope) -> ModelSet:
 					'path': resolve_relative_path('../.assets/models/yunet_2023_mar.onnx')
 				}
 			}
+		},
+		'mediapipe':
+		{
+			'__metadata__':
+			{
+				'vendor': 'Google',
+				'license': 'Apache-2.0',
+				'year': 2023
+			},
+			'path': resolve_relative_path('../.assets/models/blaze_face_short_range.tflite')
 		}
 	}
 
 
 def get_inference_pool() -> InferencePool:
-	model_names = [ state_manager.get_item('face_detector_model') ]
+	face_detector_model = state_manager.get_item('face_detector_model')
+
+	if face_detector_model == 'mediapipe':
+		return {} #type:ignore[return-value]
+
+	model_names = [ face_detector_model ]
 	_, model_source_set = collect_model_downloads()
 
 	return inference_manager.get_inference_pool(__name__, model_names, model_source_set)
 
 
 def clear_inference_pool() -> None:
-	model_names = [ state_manager.get_item('face_detector_model') ]
+	face_detector_model = state_manager.get_item('face_detector_model')
+
+	if face_detector_model == 'mediapipe':
+		mediapipe_manager.clear_face_detector()
+		return
+
+	model_names = [ face_detector_model ]
 	inference_manager.clear_inference_pool(__name__, model_names)
 
 
 def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 	model_set = create_static_model_set('full')
-	model_hash_set = {}
-	model_source_set = {}
+	model_hash_set : DownloadSet = {}
+	model_source_set : DownloadSet = {}
 
 	for face_detector_model in [ 'retinaface', 'scrfd', 'yolo_face', 'yunet' ]:
 		if state_manager.get_item('face_detector_model') in [ 'many', face_detector_model ]:
@@ -146,37 +167,45 @@ def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 
 
 def pre_check() -> bool:
+	if state_manager.get_item('face_detector_model') == 'mediapipe':
+		return mediapipe_manager.check_mediapipe_available()
+
 	model_hash_set, model_source_set = collect_model_downloads()
 
 	return conditional_download_hashes(model_hash_set) and conditional_download_sources(model_source_set)
 
 
 def detect_faces(vision_frame : VisionFrame) -> Tuple[List[BoundingBox], List[Score], List[FaceLandmark5]]:
+	face_detector_model = state_manager.get_item('face_detector_model')
+
+	if face_detector_model == 'mediapipe':
+		return detect_with_mediapipe(vision_frame)
+
 	margin_top, margin_right, margin_bottom, margin_left = prepare_margin(vision_frame)
 	margin_vision_frame = numpy.pad(vision_frame, ((margin_top, margin_bottom), (margin_left, margin_right), (0, 0)))
 	all_bounding_boxes : List[BoundingBox] = []
 	all_face_scores : List[Score] = []
 	all_face_landmarks_5 : List[FaceLandmark5] = []
 
-	if state_manager.get_item('face_detector_model') in [ 'many', 'retinaface' ]:
+	if face_detector_model in [ 'many', 'retinaface' ]:
 		bounding_boxes, face_scores, face_landmarks_5 = detect_with_retinaface(margin_vision_frame, state_manager.get_item('face_detector_size'))
 		all_bounding_boxes.extend(bounding_boxes)
 		all_face_scores.extend(face_scores)
 		all_face_landmarks_5.extend(face_landmarks_5)
 
-	if state_manager.get_item('face_detector_model') in [ 'many', 'scrfd' ]:
+	if face_detector_model in [ 'many', 'scrfd' ]:
 		bounding_boxes, face_scores, face_landmarks_5 = detect_with_scrfd(margin_vision_frame, state_manager.get_item('face_detector_size'))
 		all_bounding_boxes.extend(bounding_boxes)
 		all_face_scores.extend(face_scores)
 		all_face_landmarks_5.extend(face_landmarks_5)
 
-	if state_manager.get_item('face_detector_model') in [ 'many', 'yolo_face' ]:
+	if face_detector_model in [ 'many', 'yolo_face' ]:
 		bounding_boxes, face_scores, face_landmarks_5 = detect_with_yolo_face(margin_vision_frame, state_manager.get_item('face_detector_size'))
 		all_bounding_boxes.extend(bounding_boxes)
 		all_face_scores.extend(face_scores)
 		all_face_landmarks_5.extend(face_landmarks_5)
 
-	if state_manager.get_item('face_detector_model') == 'yunet':
+	if face_detector_model == 'yunet':
 		bounding_boxes, face_scores, face_landmarks_5 = detect_with_yunet(margin_vision_frame, state_manager.get_item('face_detector_size'))
 		all_bounding_boxes.extend(bounding_boxes)
 		all_face_scores.extend(face_scores)
@@ -185,6 +214,13 @@ def detect_faces(vision_frame : VisionFrame) -> Tuple[List[BoundingBox], List[Sc
 	all_bounding_boxes = [ normalize_bounding_box(all_bounding_box) - numpy.array([ margin_left, margin_top, margin_left, margin_top ]) for all_bounding_box in all_bounding_boxes ]
 	all_face_landmarks_5 = [ all_face_landmark_5 - numpy.array([ margin_left, margin_top ]) for all_face_landmark_5 in all_face_landmarks_5 ]
 	return all_bounding_boxes, all_face_scores, all_face_landmarks_5
+
+
+def detect_with_mediapipe(vision_frame : VisionFrame) -> Tuple[List[BoundingBox], List[Score], List[FaceLandmark5]]:
+	model_set = create_static_model_set('full').get('mediapipe')
+	model_path = model_set.get('path')
+
+	return mediapipe_manager.detect_faces(vision_frame, model_path)
 
 
 def prepare_margin(vision_frame : VisionFrame) -> Margin:

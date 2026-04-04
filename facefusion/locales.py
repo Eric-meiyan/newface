@@ -268,7 +268,9 @@ LOCALES : Locales =\
 			'webcam_image': 'WEBCAM',
 			'webcam_device_id_dropdown': 'WEBCAM DEVICE ID',
 			'webcam_mode_radio': 'WEBCAM MODE',
-			'webcam_resolution_dropdown': 'WEBCAM RESOLUTION'
+			'webcam_resolution_dropdown': 'WEBCAM RESOLUTION',
+			'stream_process_scale_dropdown': 'STREAM PROCESS SCALE',
+			'stream_frame_drop_checkbox': 'STREAM FRAME DROP'
 		}
 	}
 }

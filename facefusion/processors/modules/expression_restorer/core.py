@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 from functools import lru_cache
-from typing import Tuple
+from typing import Optional, Tuple
 
 import cv2
 import numpy
@@ -15,6 +15,7 @@ from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_box_mask, create_occlusion_mask
 from facefusion.face_selector import select_faces
 from facefusion.filesystem import in_directory, is_image, is_video, resolve_relative_path, same_file_extension
+from facefusion.processors.blendshape_mapper import map_blendshapes_to_expression
 from facefusion.processors.live_portrait import create_rotation, limit_expression
 from facefusion.processors.modules.expression_restorer import choices as expression_restorer_choices
 from facefusion.processors.modules.expression_restorer.types import ExpressionRestorerInputs
@@ -23,6 +24,9 @@ from facefusion.program_helper import find_argument_group
 from facefusion.thread_helper import conditional_thread_semaphore, thread_semaphore
 from facefusion.types import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, VisionFrame
 from facefusion.vision import read_static_image, read_static_video_frame
+
+CACHED_FEATURE_VOLUME : Optional[LivePortraitFeatureVolume] = None
+CACHED_FACE_HASH : Optional[int] = None
 
 
 @lru_cache()
@@ -119,9 +123,11 @@ def pre_check() -> bool:
 
 
 def pre_process(mode : ProcessMode) -> bool:
-	if mode == 'stream':
+	if mode == 'stream' and state_manager.get_item('face_landmarker_model') != 'mediapipe':
 		logger.error(translator.get('stream_not_supported') + translator.get('exclamation_mark'), __name__)
 		return False
+	if mode == 'stream':
+		return True
 	if mode in [ 'output', 'preview' ] and not is_image(state_manager.get_item('target_path')) and not is_video(state_manager.get_item('target_path')):
 		logger.error(translator.get('choose_image_or_video_target') + translator.get('exclamation_mark'), __name__)
 		return False
@@ -135,6 +141,10 @@ def pre_process(mode : ProcessMode) -> bool:
 
 
 def post_process() -> None:
+	global CACHED_FEATURE_VOLUME, CACHED_FACE_HASH
+
+	CACHED_FEATURE_VOLUME = None
+	CACHED_FACE_HASH = None
 	read_static_image.cache_clear()
 	read_static_video_frame.cache_clear()
 	video_manager.clear_video_pool()
@@ -167,7 +177,12 @@ def restore_expression(target_face : Face, target_vision_frame : VisionFrame, te
 
 	target_crop_vision_frame = prepare_crop_frame(target_crop_vision_frame)
 	temp_crop_vision_frame = prepare_crop_frame(temp_crop_vision_frame)
-	temp_crop_vision_frame = apply_restore(target_crop_vision_frame, temp_crop_vision_frame, expression_restorer_factor)
+
+	if target_face.blendshapes is not None:
+		temp_crop_vision_frame = apply_restore_realtime(target_crop_vision_frame, temp_crop_vision_frame, expression_restorer_factor, target_face)
+	else:
+		temp_crop_vision_frame = apply_restore(target_crop_vision_frame, temp_crop_vision_frame, expression_restorer_factor)
+
 	temp_crop_vision_frame = normalize_crop_frame(temp_crop_vision_frame)
 	crop_mask = numpy.minimum.reduce(crop_masks).clip(0, 1)
 	paste_vision_frame = paste_back(temp_vision_frame, temp_crop_vision_frame, crop_mask, affine_matrix)
@@ -177,6 +192,30 @@ def restore_expression(target_face : Face, target_vision_frame : VisionFrame, te
 def apply_restore(target_crop_vision_frame : VisionFrame, temp_crop_vision_frame : VisionFrame, expression_restorer_factor : float) -> VisionFrame:
 	feature_volume = forward_extract_feature(temp_crop_vision_frame)
 	target_expression = forward_extract_motion(target_crop_vision_frame)[5]
+	pitch, yaw, roll, scale, translation, temp_expression, motion_points = forward_extract_motion(temp_crop_vision_frame)
+	rotation = create_rotation(pitch, yaw, roll)
+	target_expression = restrict_expression_areas(temp_expression, target_expression)
+	target_expression = target_expression * expression_restorer_factor + temp_expression * (1 - expression_restorer_factor)
+	target_expression = limit_expression(target_expression)
+	target_motion_points = scale * (motion_points @ rotation.T + target_expression) + translation
+	temp_motion_points = scale * (motion_points @ rotation.T + temp_expression) + translation
+	crop_vision_frame = forward_generate_frame(feature_volume, target_motion_points, temp_motion_points)
+	return crop_vision_frame
+
+
+def apply_restore_realtime(target_crop_vision_frame : VisionFrame, temp_crop_vision_frame : VisionFrame, expression_restorer_factor : float, target_face : Face) -> VisionFrame:
+	global CACHED_FEATURE_VOLUME, CACHED_FACE_HASH
+
+	face_hash = hash(target_face.embedding.tobytes()) if target_face.embedding is not None else None
+
+	if CACHED_FEATURE_VOLUME is not None and face_hash == CACHED_FACE_HASH:
+		feature_volume = CACHED_FEATURE_VOLUME
+	else:
+		feature_volume = forward_extract_feature(temp_crop_vision_frame)
+		CACHED_FEATURE_VOLUME = feature_volume
+		CACHED_FACE_HASH = face_hash
+
+	target_expression = map_blendshapes_to_expression(target_face.blendshapes)
 	pitch, yaw, roll, scale, translation, temp_expression, motion_points = forward_extract_motion(temp_crop_vision_frame)
 	rotation = create_rotation(pitch, yaw, roll)
 	target_expression = restrict_expression_areas(temp_expression, target_expression)

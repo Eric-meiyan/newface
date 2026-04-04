@@ -1,8 +1,7 @@
 import os
 import subprocess
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from typing import Deque, Iterator
+import threading
+from typing import Iterator, Optional
 
 import cv2
 import numpy
@@ -18,37 +17,67 @@ from facefusion.types import Fps, StreamMode, VisionFrame
 from facefusion.vision import extract_vision_mask, read_static_images
 
 
-def multi_process_capture(camera_capture : cv2.VideoCapture, camera_fps : Fps) -> Iterator[VisionFrame]:
-	capture_deque : Deque[VisionFrame] = deque()
+def multi_process_capture(camera_capture : cv2.VideoCapture, camera_fps : Fps, stream_process_scale : float = 1.0, stream_frame_drop : bool = True) -> Iterator[VisionFrame]:
+	latest_frame : Optional[VisionFrame] = None
+	frame_lock = threading.Lock()
+	is_running = True
+
+	def capture_loop() -> None:
+		nonlocal latest_frame, is_running
+
+		while is_running and camera_capture and camera_capture.isOpened():
+			ret, frame = camera_capture.read()
+
+			if not ret or not numpy.any(frame):
+				continue
+
+			if analyse_stream(frame, camera_fps):
+				camera_capture.release()
+				is_running = False
+				return
+
+			if stream_frame_drop:
+				with frame_lock:
+					latest_frame = frame
+			else:
+				with frame_lock:
+					latest_frame = frame
+
+	capture_thread = threading.Thread(target = capture_loop, daemon = True)
+	capture_thread.start()
 
 	with tqdm(desc = translator.get('streaming'), unit = 'frame', disable = state_manager.get_item('log_level') in [ 'warn', 'error' ]) as progress:
-		with ThreadPoolExecutor(max_workers = state_manager.get_item('execution_thread_count')) as executor:
-			futures = []
+		while is_running:
+			with frame_lock:
+				frame = latest_frame
+				latest_frame = None
 
-			while camera_capture and camera_capture.isOpened():
-				_, capture_vision_frame = camera_capture.read()
-				if analyse_stream(capture_vision_frame, camera_fps):
-					camera_capture.release()
+			if frame is None:
+				continue
 
-				if numpy.any(capture_vision_frame):
-					future = executor.submit(process_stream_frame, capture_vision_frame)
-					futures.append(future)
+			processed_frame = process_stream_frame(frame, stream_process_scale)
+			progress.update()
+			yield processed_frame
 
-				for future_done in [ future for future in futures if future.done() ]:
-					capture_vision_frame = future_done.result()
-					capture_deque.append(capture_vision_frame)
-					futures.remove(future_done)
-
-				while capture_deque:
-					progress.update()
-					yield capture_deque.popleft()
+	capture_thread.join(timeout = 5.0)
 
 
-def process_stream_frame(target_vision_frame : VisionFrame) -> VisionFrame:
+def process_stream_frame(target_vision_frame : VisionFrame, stream_process_scale : float = 1.0) -> VisionFrame:
+	if stream_process_scale < 1.0:
+		original_height, original_width = target_vision_frame.shape[:2]
+		scaled_width = int(original_width * stream_process_scale)
+		scaled_height = int(original_height * stream_process_scale)
+		scaled_width = scaled_width + scaled_width % 2
+		scaled_height = scaled_height + scaled_height % 2
+		process_frame = cv2.resize(target_vision_frame, (scaled_width, scaled_height))
+	else:
+		process_frame = target_vision_frame
+		original_height, original_width = 0, 0
+
 	source_vision_frames = read_static_images(state_manager.get_item('source_paths'))
 	source_audio_frame = create_empty_audio_frame()
 	source_voice_frame = create_empty_audio_frame()
-	temp_vision_frame = target_vision_frame.copy()
+	temp_vision_frame = process_frame.copy()
 	temp_vision_mask = extract_vision_mask(temp_vision_frame)
 
 	for processor_module in get_processors_modules(state_manager.get_item('processors')):
@@ -60,11 +89,14 @@ def process_stream_frame(target_vision_frame : VisionFrame) -> VisionFrame:
 				'source_vision_frames': source_vision_frames,
 				'source_audio_frame': source_audio_frame,
 				'source_voice_frame': source_voice_frame,
-				'target_vision_frame': target_vision_frame,
+				'target_vision_frame': process_frame,
 				'temp_vision_frame': temp_vision_frame,
 				'temp_vision_mask': temp_vision_mask
 			})
 		logger.enable()
+
+	if stream_process_scale < 1.0:
+		temp_vision_frame = cv2.resize(temp_vision_frame, (original_width, original_height))
 
 	return temp_vision_frame
 
