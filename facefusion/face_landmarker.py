@@ -146,7 +146,7 @@ def get_inference_pool() -> InferencePool:
 	face_landmarker_model = state_manager.get_item('face_landmarker_model')
 
 	if face_landmarker_model == 'mediapipe':
-		return {} #type:ignore[return-value]
+		face_landmarker_model = 'many'
 
 	model_names = [ face_landmarker_model, 'fan_68_5' ]
 	_, model_source_set = collect_model_downloads()
@@ -158,8 +158,7 @@ def clear_inference_pool() -> None:
 	face_landmarker_model = state_manager.get_item('face_landmarker_model')
 
 	if face_landmarker_model == 'mediapipe':
-		mediapipe_manager.clear_face_landmarker()
-		return
+		face_landmarker_model = 'many'
 
 	model_names = [ face_landmarker_model, 'fan_68_5' ]
 	inference_manager.clear_inference_pool(__name__, model_names)
@@ -169,22 +168,25 @@ def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 	model_set = create_static_model_set('full')
 	model_hash_set : DownloadSet = {}
 	model_source_set : DownloadSet = {}
+	face_landmarker_model = state_manager.get_item('face_landmarker_model')
+	if face_landmarker_model == 'mediapipe':
+		face_landmarker_model = 'many'
 
-	if state_manager.get_item('face_landmarker_model') != 'mediapipe':
+	if face_landmarker_model != 'mediapipe':
 		model_hash_set['fan_68_5'] = model_set.get('fan_68_5').get('hashes').get('fan_68_5')
 		model_source_set['fan_68_5'] = model_set.get('fan_68_5').get('sources').get('fan_68_5')
 
-	for face_landmarker_model in [ '2dfan4', 'peppa_wutz' ]:
-		if state_manager.get_item('face_landmarker_model') in [ 'many', face_landmarker_model ]:
-			model_hash_set[face_landmarker_model] = model_set.get(face_landmarker_model).get('hashes').get(face_landmarker_model)
-			model_source_set[face_landmarker_model] = model_set.get(face_landmarker_model).get('sources').get(face_landmarker_model)
+	for model in [ '2dfan4', 'peppa_wutz' ]:
+		if face_landmarker_model in [ 'many', model ]:
+			model_hash_set[model] = model_set.get(model).get('hashes').get(model)
+			model_source_set[model] = model_set.get(model).get('sources').get(model)
 
 	return model_hash_set, model_source_set
 
 
 def pre_check() -> bool:
 	if state_manager.get_item('face_landmarker_model') == 'mediapipe':
-		return mediapipe_manager.check_mediapipe_available()
+		state_manager.set_item('face_landmarker_model', 'many')  # fallback for Python 3.13
 
 	model_hash_set, model_source_set = collect_model_downloads()
 
@@ -195,7 +197,7 @@ def detect_face_landmark(vision_frame : VisionFrame, bounding_box : BoundingBox,
 	face_landmarker_model = state_manager.get_item('face_landmarker_model')
 
 	if face_landmarker_model == 'mediapipe':
-		return detect_with_mediapipe(vision_frame, bounding_box)
+		face_landmarker_model = 'many'  # mediapipe not supported on Python 3.13, fallback to many
 
 	face_landmark_2dfan4 = None
 	face_landmark_peppa_wutz = None

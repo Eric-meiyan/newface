@@ -134,7 +134,7 @@ def get_inference_pool() -> InferencePool:
 	face_detector_model = state_manager.get_item('face_detector_model')
 
 	if face_detector_model == 'mediapipe':
-		return {} #type:ignore[return-value]
+		face_detector_model = 'yolo_face'
 
 	model_names = [ face_detector_model ]
 	_, model_source_set = collect_model_downloads()
@@ -146,8 +146,7 @@ def clear_inference_pool() -> None:
 	face_detector_model = state_manager.get_item('face_detector_model')
 
 	if face_detector_model == 'mediapipe':
-		mediapipe_manager.clear_face_detector()
-		return
+		face_detector_model = 'yolo_face'
 
 	model_names = [ face_detector_model ]
 	inference_manager.clear_inference_pool(__name__, model_names)
@@ -157,18 +156,21 @@ def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 	model_set = create_static_model_set('full')
 	model_hash_set : DownloadSet = {}
 	model_source_set : DownloadSet = {}
+	face_detector_model = state_manager.get_item('face_detector_model')
+	if face_detector_model == 'mediapipe':
+		face_detector_model = 'yolo_face'
 
-	for face_detector_model in [ 'retinaface', 'scrfd', 'yolo_face', 'yunet' ]:
-		if state_manager.get_item('face_detector_model') in [ 'many', face_detector_model ]:
-			model_hash_set[face_detector_model] = model_set.get(face_detector_model).get('hashes').get(face_detector_model)
-			model_source_set[face_detector_model] = model_set.get(face_detector_model).get('sources').get(face_detector_model)
+	for model in [ 'retinaface', 'scrfd', 'yolo_face', 'yunet' ]:
+		if face_detector_model in [ 'many', model ]:
+			model_hash_set[model] = model_set.get(model).get('hashes').get(model)
+			model_source_set[model] = model_set.get(model).get('sources').get(model)
 
 	return model_hash_set, model_source_set
 
 
 def pre_check() -> bool:
 	if state_manager.get_item('face_detector_model') == 'mediapipe':
-		return mediapipe_manager.check_mediapipe_available()
+		state_manager.set_item('face_detector_model', 'yolo_face')  # fallback for Python 3.13
 
 	model_hash_set, model_source_set = collect_model_downloads()
 
@@ -179,7 +181,7 @@ def detect_faces(vision_frame : VisionFrame) -> Tuple[List[BoundingBox], List[Sc
 	face_detector_model = state_manager.get_item('face_detector_model')
 
 	if face_detector_model == 'mediapipe':
-		return detect_with_mediapipe(vision_frame)
+		face_detector_model = 'yolo_face'  # mediapipe not supported on Python 3.13, fallback to yolo_face
 
 	margin_top, margin_right, margin_bottom, margin_left = prepare_margin(vision_frame)
 	margin_vision_frame = numpy.pad(vision_frame, ((margin_top, margin_bottom), (margin_left, margin_right), (0, 0)))
