@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy
 
@@ -10,7 +10,7 @@ from facefusion.face_helper import apply_nms, convert_to_face_landmark_5, estima
 from facefusion.face_landmarker import detect_face_landmark, estimate_face_landmark_68_5
 from facefusion.face_recognizer import calculate_face_embedding
 from facefusion.face_store import get_static_faces, set_static_faces
-from facefusion.types import BoundingBox, Face, FaceLandmark5, FaceLandmarkSet, FaceScoreSet, Score, VisionFrame
+from facefusion.types import BoundingBox, Face, FaceBlendshapes, FaceLandmark468, FaceLandmark5, FaceLandmarkSet, FacePoseMatrix, FaceScoreSet, Score, VisionFrame
 
 
 def create_faces(vision_frame : VisionFrame, bounding_boxes : List[BoundingBox], face_scores : List[Score], face_landmarks_5 : List[FaceLandmark5]) -> List[Face]:
@@ -27,18 +27,32 @@ def create_faces(vision_frame : VisionFrame, bounding_boxes : List[BoundingBox],
 		face_landmark_68 = face_landmark_68_5
 		face_landmark_score_68 = 0.0
 		face_angle = estimate_face_angle(face_landmark_68_5)
+		face_landmark_468 : Optional[FaceLandmark468] = None
+		face_blendshapes : Optional[FaceBlendshapes] = None
+		face_pose_matrix : Optional[FacePoseMatrix] = None
+		mediapipe_data : Optional[Dict[str, Any]] = None
 
 		if state_manager.get_item('face_landmarker_score') > 0:
-			face_landmark_68, face_landmark_score_68 = detect_face_landmark(vision_frame, bounding_box, face_angle)
+			face_landmark_68, face_landmark_score_68, mediapipe_data = detect_face_landmark(vision_frame, bounding_box, face_angle)
 		if face_landmark_score_68 > state_manager.get_item('face_landmarker_score'):
 			face_landmark_5_68 = convert_to_face_landmark_5(face_landmark_68)
+
+		if mediapipe_data:
+			face_landmark_468 = mediapipe_data.get('landmark_468')
+			face_blendshapes = mediapipe_data.get('blendshapes')
+			face_pose_matrix = mediapipe_data.get('pose_matrix')
+			mediapipe_landmark_5 = mediapipe_data.get('landmark_5')
+
+			if mediapipe_landmark_5 is not None:
+				face_landmark_5_68 = mediapipe_landmark_5
 
 		face_landmark_set : FaceLandmarkSet =\
 		{
 			'5': face_landmark_5,
 			'5/68': face_landmark_5_68,
 			'68': face_landmark_68,
-			'68/5': face_landmark_68_5
+			'68/5': face_landmark_68_5,
+			'468': face_landmark_468
 		}
 		face_score_set : FaceScoreSet =\
 		{
@@ -56,7 +70,9 @@ def create_faces(vision_frame : VisionFrame, bounding_boxes : List[BoundingBox],
 			embedding_norm = face_embedding_norm,
 			gender = gender,
 			age = age,
-			race = race
+			race = race,
+			blendshapes = face_blendshapes,
+			pose_matrix = face_pose_matrix
 		))
 	return faces
 
@@ -88,7 +104,9 @@ def get_average_face(faces : List[Face]) -> Optional[Face]:
 			embedding_norm = numpy.mean(face_embeddings_norm, axis = 0),
 			gender = first_face.gender,
 			age = first_face.age,
-			race = first_face.race
+			race = first_face.race,
+			blendshapes = first_face.blendshapes,
+			pose_matrix = first_face.pose_matrix
 		)
 	return None
 
@@ -129,12 +147,23 @@ def scale_face(target_face : Face, target_vision_frame : VisionFrame, temp_visio
 	scale_y = temp_vision_frame.shape[0] / target_vision_frame.shape[0]
 
 	bounding_box = target_face.bounding_box * [ scale_x, scale_y, scale_x, scale_y ]
-	landmark_set =\
+	landmark_468 = target_face.landmark_set.get('468')
+
+	if landmark_468 is not None:
+		scaled_468 = landmark_468.copy()
+		scaled_468[:, 0] *= scale_x
+		scaled_468[:, 1] *= scale_y
+		scaled_468[:, 2] *= (scale_x + scale_y) / 2
+	else:
+		scaled_468 = None
+
+	landmark_set : FaceLandmarkSet =\
 	{
 		'5': target_face.landmark_set.get('5') * numpy.array([ scale_x, scale_y ]),
 		'5/68': target_face.landmark_set.get('5/68') * numpy.array([ scale_x, scale_y ]),
 		'68': target_face.landmark_set.get('68') * numpy.array([ scale_x, scale_y ]),
-		'68/5': target_face.landmark_set.get('68/5') * numpy.array([ scale_x, scale_y ])
+		'68/5': target_face.landmark_set.get('68/5') * numpy.array([ scale_x, scale_y ]),
+		'468': scaled_468
 	}
 
 	return target_face._replace(
