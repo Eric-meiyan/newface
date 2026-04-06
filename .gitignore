@@ -5,3 +5,7 @@ __pycache__
 .idea
 .jobs
 .vscode
+
+# User generated
+facefusion.ini
+.jobs/
